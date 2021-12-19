@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.sparse import csc_matrix
-from scipy.sparse.linalg import spsolve, factorized
+from scipy.sparse.linalg import factorized
 
 
 def mat_id_in_vec(i, j, num_cols):
@@ -28,8 +28,8 @@ class Grid():
 
         self.B = self.assemble_B_matrix()  # for computing divergence on edges
         self.D = self.B.T  # for computing gradient at cell centers
-        self.A = self.B.dot(self.D)  # for computing laplacian at cell centers
-        self.A_factorized = factorized(self.A)
+        A = self.B.dot(self.D)  # for computing laplacian at cell centers
+        self.A_factorized = factorized(A)  # pre-factor to speed up solve time
 
         self.Pu, self.Pv = self.assemble_img_velo_to_grid_transform()
     
@@ -133,9 +133,7 @@ class Grid():
     def pressure_solve(self, dt, density):
         div_velocity = self.B.dot(np.concatenate([self.u.flatten(), self.v.flatten()]))
         self.p = self.A_factorized(div_velocity)
-        # self.p = spsolve(self.A, div_velocity)
 
-        # delta_velo_flattened = self.D.dot(self.p)
         delta_velo_flattened = dt / density * self.D.dot(self.p)
         self.delta_u = -delta_velo_flattened[:self.num_u].reshape(self.nx, self.ny - 1)
         self.delta_v = -delta_velo_flattened[self.num_u:].reshape(self.nx - 1, self.ny)
