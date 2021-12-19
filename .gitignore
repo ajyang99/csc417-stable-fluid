@@ -130,3 +130,5 @@ dmypy.json
 
 # others
 out/
+
+**/.DS_Store
