@@ -1,6 +1,6 @@
 import numpy as np
-from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
+from scipy.sparse import csc_matrix
+from scipy.sparse.linalg import spsolve, factorized
 
 
 def mat_id_in_vec(i, j, num_cols):
@@ -28,9 +28,8 @@ class Grid():
 
         self.B = self.assemble_B_matrix()  # for computing divergence on edges
         self.D = self.B.T  # for computing gradient at cell centers
-        # self.D = self.assemble_D_matrix()  # for computing gradient at cell centers
-        # self.A = self.B.dot(self.D)  # for computing laplacian at cell centers
-        self.A = self.B.dot(self.B.T)  # for computing laplacian at cell centers
+        self.A = self.B.dot(self.D)  # for computing laplacian at cell centers
+        self.A_factorized = factorized(self.A)
 
         self.Pu, self.Pv = self.assemble_img_velo_to_grid_transform()
     
@@ -79,49 +78,8 @@ class Grid():
                 cols.append(self.num_u + self.v_vec_idx(i, j + 1))
                 data.append(1.0 / self.h)
 
-        B = csr_matrix((data, (rows, cols)), shape=((self.nx - 1) * (self.ny - 1), self.num_u + self.num_v))
-        return B
-
-    def assemble_D_matrix(self):
-        # D.dot(self.p.flatten()) corresponds to the pressure gradients at the edges
-        # (horizontal first, and then vertical). We enforce a wrapping boundary condition,
-        # such that the left edge of cell (0, 0) has gradient (p(0, 0) - p(-1, 0)) / h
-        rows = []
-        cols = []
-        data = []
-
-        # horizontal
-        for i in range(self.nx):
-            for j in range(self.ny - 1):
-                # the gradient at u(i, j) should be (p(i, j) - p(i-1, j)) / h
-                left_i = (i - 1 + self.nx - 1) % (self.nx - 1)
-                right_i = i % (self.nx - 1)
-
-                rows.append(self.u_vec_idx(i, j))
-                cols.append(self.p_vec_idx(left_i, j))
-                data.append(-1.0 / self.h)
-                
-                rows.append(self.u_vec_idx(i, j))
-                cols.append(self.p_vec_idx(right_i, j))
-                data.append(1.0 / self.h)
-        
-        # vertical
-        for i in range(self.nx - 1):
-            for j in range(self.ny):
-                # the gradient at v(i, j) should be (p(i, j) - p(i, j-1)) / h
-                bot_j = (j - 1 + self.ny - 1) % (self.ny - 1)
-                top_j = j % (self.ny - 1)
-
-                rows.append(self.num_u + self.v_vec_idx(i, j))
-                cols.append(self.p_vec_idx(i, bot_j))
-                data.append(-1.0 / self.h)
-                
-                rows.append(self.num_u + self.v_vec_idx(i, j))
-                cols.append(self.p_vec_idx(i, top_j))
-                data.append(1.0 / self.h)
-        D = csr_matrix((data, (rows, cols)), shape=(self.num_u + self.num_v, (self.nx - 1) * (self.ny - 1)))
-        return D
-    
+        B = csc_matrix((data, (rows, cols)), shape=((self.nx - 1) * (self.ny - 1), self.num_u + self.num_v))
+        return B  
 
     def assemble_img_velo_to_grid_transform(self):
         # Build a [num_u, nx * ny] matrix and a [num_v, nx * ny] matrix to map velocities in the (nx, ny) image
@@ -138,7 +96,7 @@ class Grid():
                 rows.append(self.u_vec_idx(i, j))
                 cols.append(mat_id_in_vec(i, j + 1, self.ny))
                 data.append(0.5)
-        Pu = csr_matrix((data, (rows, cols)), shape=(self.num_u, self.nx * self.ny))
+        Pu = csc_matrix((data, (rows, cols)), shape=(self.num_u, self.nx * self.ny))
 
         rows = []
         cols = []
@@ -152,7 +110,7 @@ class Grid():
                 rows.append(self.v_vec_idx(i, j))
                 cols.append(mat_id_in_vec(i + 1, j, self.ny))
                 data.append(0.5)
-        Pv = csr_matrix((data, (rows, cols)), shape=(self.num_v, self.nx * self.ny))
+        Pv = csc_matrix((data, (rows, cols)), shape=(self.num_v, self.nx * self.ny))
         return Pu, Pv
 
     def init_velo_from_img(self, img_velo):
@@ -173,15 +131,12 @@ class Grid():
         return img_velo
     
     def pressure_solve(self, dt, density):
-        self.u[0,:] /= 2.
-        self.u[-1,:] /= 2.
-        self.v[:,0] /= 2.
-        self.v[:,-1] /= 2.
         div_velocity = self.B.dot(np.concatenate([self.u.flatten(), self.v.flatten()]))
-        self.p = spsolve(self.A, div_velocity)
+        self.p = self.A_factorized(div_velocity)
+        # self.p = spsolve(self.A, div_velocity)
 
-        delta_velo_flattened = self.D.dot(self.p)
-        # delta_velo_flattened = dt / density * self.D.dot(self.p)
+        # delta_velo_flattened = self.D.dot(self.p)
+        delta_velo_flattened = dt / density * self.D.dot(self.p)
         self.delta_u = -delta_velo_flattened[:self.num_u].reshape(self.nx, self.ny - 1)
         self.delta_v = -delta_velo_flattened[self.num_u:].reshape(self.nx - 1, self.ny)
         self.u += self.delta_u
