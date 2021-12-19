@@ -108,9 +108,9 @@ class StableFluidImg():
             if dissipation_rate != 0:
                 self.img = self.img / (1 + dt * dissipation_rate)
 
-            # # save image
+            # save image
             out_fpath = os.path.join(self.outdir, f"{time_step:06d}.png")
-            # cv2.imwrite(out_fpath, self.img)
+            cv2.imwrite(out_fpath, self.img)
             out_fpaths.append(out_fpath)
         
         if create_video:
