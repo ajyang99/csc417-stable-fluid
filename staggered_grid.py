@@ -48,7 +48,7 @@ def assemble_div_op(nx, ny, h):
     return B  
 
 
-class VelocityGrid():
+class PressureSolver():
     """Staggered MAC grid for diffusion, pressure solve, etc."""
     def __init__(self, nx, ny, h):
         # The image size is [nx, ny], so each "particle" is each pixel in the image
@@ -56,7 +56,7 @@ class VelocityGrid():
         # the dimension of the staggered MAC grid is (nx - 1) * (ny - 1)
         self.nx = nx
         self.ny = ny
-        self.h = h
+        self.h = h  # grid size in world coordinate
         self.num_u = nx * (ny - 1)
         self.num_v = (nx - 1) * ny
 
@@ -68,12 +68,6 @@ class VelocityGrid():
         self.D = self.B.T  # for computing gradient at cell centers
         laplacian_p_op = self.B.dot(self.D)  # for computing laplacian at cell centers
         self.laplacian_p_op_factorized = factorized(laplacian_p_op)  # pre-factor to speed up solve time
-        
-        # cached values for diffusion, will update/cache once viscosity/dt are available
-        self.viscosity = None
-        self.dt = None
-        self.diffusion_op_u_factorized = None
-        self.diffusion_op_v_factorized = None
 
         self.Pu, self.Pv = self.assemble_img_velo_to_grid_transform()
     
@@ -132,26 +126,6 @@ class VelocityGrid():
         img_velo[:, :, 1] = self.Pv.T.dot(self.v.flatten()).reshape(self.nx, self.ny)
         return img_velo
     
-    def compute_diffusion_op(self, dt, viscosity):
-        if self.dt != dt or self.viscosity != viscosity:
-            self.viscosity = viscosity
-            self.dt = dt
-            B_u = self.B[:, :self.num_u]
-            B_v = self.B[:, self.num_u:]
-            laplacian_u_op = B_u.T.dot(B_u)  # for computing laplacian at u
-            laplacian_v_op = B_v.T.dot(B_v)  # for computing laplacian at v
-            self.diffusion_op_u_factorized = factorized(
-                identity(self.num_u, format="csc") - dt * viscosity * laplacian_u_op
-            )
-            self.diffusion_op_v_factorized = factorized(
-                identity(self.num_v, format="csc") - dt * viscosity * laplacian_v_op
-            )
-    
-    def diffuse(self, dt, viscosity):
-        self.compute_diffusion_op(dt, viscosity)
-        self.u = self.diffusion_op_u_factorized(self.u.flatten()).reshape(self.u.shape)
-        self.v = self.diffusion_op_v_factorized(self.v.flatten()).reshape(self.v.shape)
-    
     def pressure_solve(self, dt, density):
         div_velocity = self.B.dot(np.concatenate([self.u.flatten(), self.v.flatten()]))
         self.p = self.laplacian_p_op_factorized(div_velocity)
@@ -161,8 +135,8 @@ class VelocityGrid():
         self.v -= delta_velo_flattened[self.num_u:].reshape(self.nx - 1, self.ny)
 
 
-class ScalarGrid():
-    """Staggered MAC grid for scalar diffusion"""
+class DiffusionSolver():
+    """Finite difference solver for diffusion"""
     def __init__(self, nx, ny, h):
         # For each scalar field of size (nx, ny), the values are at the cell center
         # We build and cache the gradient matrix for computing the gradient at cell center, to be used in diffusion
@@ -181,7 +155,7 @@ class ScalarGrid():
         if self.dt != dt or self.diffusion_constant != diffusion_constant:
             self.diffusion_constant = diffusion_constant
             self.dt = dt
-            laplacian_op = self.D.dot(self.D.T)
+            laplacian_op = -self.D.T.dot(self.D)
             self.diffusion_op_factorized = factorized(
                 identity(self.nx * self.ny, format="csc") - dt * diffusion_constant * laplacian_op
             )

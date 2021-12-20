@@ -1,11 +1,13 @@
 import numpy as np
 import cv2
 import os
-import imageio
+import matplotlib.pyplot as plt
+
 from fire import Fire
 from scipy import ndimage
 
-from staggered_grid import VelocityGrid, ScalarGrid
+from staggered_grid import PressureSolver, DiffusionSolver
+from utils import create_video_from_img_fpths
 
 
 class StableFluidImg():
@@ -26,8 +28,9 @@ class StableFluidImg():
         self.img = img  # scalar field at cell center of shape (nx, ny, 3)
         self.velocities = np.zeros([self.nx, self.ny, 2])  # 2D velocity field
         
-        self.velo_grid = VelocityGrid(self.nx, self.ny, 1.0)  # staggered MAC grid for velocity
-        self.scalar_grid = ScalarGrid(self.nx, self.ny, 1.0)  # staggered MAC grid for scalar field
+        self.pressure_solver = PressureSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for velocity
+        self.velo_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for velocity field
+        self.scalar_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for scalar field
 
         # positions of each pixel/cell on the image grid to be used to trace particle in advection
         # note that unlike the paper we don't add the 0.5 offset since scipy.ndimage assumes (0, 0) is cell center
@@ -69,16 +72,43 @@ class StableFluidImg():
         for i in range(2):
             self.velocities[:, :, i] = ndimage.map_coordinates(self.velocities[:, :, i], pos, order=2, mode="wrap")
     
+    def visualize_velocities(self, out_fpath = None):
+        fig, ax = plt.subplots(figsize=(8,8))
+        ax.quiver(
+            self.pos_x,
+            self.pos_y,
+            self.velocities[:, :, 0],
+            self.velocities[:, :, 1]
+        )
+        # velocity_magnitude = np.linalg.norm(self.velocities, axis=2)
+        # ax.imshow(velocity_magnitude / np.max(velocity_magnitude))
+        ax.set_aspect("equal")
+        ax.invert_yaxis()
+        # from IPython import embed
+        # embed()
+        # assert False
+        if out_fpath is None:
+            fig.show()
+        else:
+            os.makedirs(os.path.dirname(out_fpath), exist_ok=True)
+            fig.savefig(out_fpath)
+        plt.close()
+    
     def simulate(
-        self, num_iterations=300, dt=0.01, density=0.01, viscosity=0.0,
-        diffusion_constant=0.0, dissipation_rate=0.0, create_video=True
+        self, num_iterations, dt, density, viscosity,
+        diffusion_constant, dissipation_rate, 
+        visualize_velocity, create_video
     ):
-        out_fpaths = []
+        out_color_fpaths = []
+        out_velocity_fpaths = []
         for time_step in range(num_iterations):
             # Step 1: add external forces
             # add external forces to velocities based on how white each pixel is
-            external_forces = np.linalg.norm(self.img, axis=2) * 0.2
-            self.add_external_forces(self.velocities, external_forces[:, :, None], dt)
+            # external_forces = np.linalg.norm(self.img, axis=2) * 0.2
+            # self.add_external_forces(self.velocities, external_forces[:, :, None], dt)
+            external_forces = np.zeros([self.nx, self.ny, 2])
+            external_forces[int(0.35 * self.nx):int(0.65 * self.nx), int(0.5 * self.ny):, 0] = -0.1
+            self.add_external_forces(self.velocities, external_forces, dt)
 
             # we can optionally add additional "forces" to the scalar field, but here we don't add additional change
             # to the color
@@ -87,54 +117,53 @@ class StableFluidImg():
             # Step 2: advect both velocities and scalar/RGB values
             self.advect(dt)
 
-            # Step 3 & 4 (velocity): diffusion & pressure solve
-            # here we use a staggered MAC grid as the solver, in place of the FISHPAK subroutines mentioned in the paper
-            self.velo_grid.init_velo_from_img(self.velocities)  # project current velocities to the MAC grid
-  
-            # diffusion for the velocity
-            self.velo_grid.diffuse(dt, viscosity)
-
-            # pressure solve
-            self.velo_grid.pressure_solve(dt, density)
-            self.velocities = self.velo_grid.convert_velo_on_img()
-
-            # Step 3 & 4 (scalar values): diffusion & dissipation
-            # diffusion for the scalar field
+            # Step 3: diffusion for both velocities and scalar/RGB values
+            if viscosity != 0:
+                for i in range(2):
+                    self.velocities[:, :, i] = self.velo_diffusion_solver.diffuse(self.velocities[:, :, i], dt, viscosity)
             if diffusion_constant != 0:
                 for i in range(3):
-                    self.img[:, :, i] = self.scalar_grid.diffuse(self.img[:, :, i], dt, diffusion_constant)
+                    self.img[:, :, i] = self.scalar_diffusion_solver.diffuse(self.img[:, :, i], dt, diffusion_constant)
 
+            # Step 4: pressure solve for velocity & dissipate scalar field
+            # here we use a staggered MAC grid as the solver, in place of the FISHPAK subroutines mentioned in the paper
+            # pressure solve
+            self.pressure_solver.init_velo_from_img(self.velocities)  # project current velocities to the MAC grid
+            self.pressure_solver.pressure_solve(dt, density)
+            self.velocities = self.pressure_solver.convert_velo_on_img()
             # dissipation
             if dissipation_rate != 0:
                 self.img = self.img / (1 + dt * dissipation_rate)
 
             # save image
-            out_fpath = os.path.join(self.outdir, f"{time_step:06d}.png")
+            out_fpath = os.path.join(self.outdir, "colors", f"{time_step:06d}.png")
+            os.makedirs(os.path.dirname(out_fpath), exist_ok=True)
             cv2.imwrite(out_fpath, self.img)
-            out_fpaths.append(out_fpath)
+            out_color_fpaths.append(out_fpath)
         
+            if visualize_velocity:
+                out_fpath_velo = os.path.join(self.outdir, "velocities", f"{time_step:06d}.png")
+                self.visualize_velocities(out_fpath_velo)
+                out_velocity_fpaths.append(out_fpath_velo)
+
         if create_video:
-            writer = imageio.get_writer(os.path.join(self.outdir, "out.mp4"), fps=20)
-            for out_fpath in out_fpaths:
-                im = imageio.imread(out_fpath)
-                writer.append_data(im)
-            writer.close()
-            writer = imageio.get_writer(os.path.join(self.outdir, "reverse.mp4"), fps=20)
-            for out_fpath in out_fpaths[::-1]:
-                im = imageio.imread(out_fpath)
-                writer.append_data(im)
-            writer.close()
+            create_video_from_img_fpths(out_color_fpaths, os.path.join(self.outdir, "colors", "out.mp4"))
+            create_video_from_img_fpths(out_color_fpaths[::-1], os.path.join(self.outdir, "colors", "reverse.mp4"))
+            if visualize_velocity:
+                create_video_from_img_fpths(out_velocity_fpaths, os.path.join(self.outdir, "velocities", "out.mp4"))
+            
 
 
 def main(
     img_fpath="data/monroe.jpeg",
     outdir="out/monroe",
     num_iterations=300,
-    dt=0.01,
-    density=0.01,
+    dt=0.1,
+    density=1.0,
     viscosity=0.0,
     diffusion_constant=0.0,
     dissipation_rate=0.0,
+    visualize_velocity=False,
     create_video=True,
 ):
     img = cv2.imread(img_fpath)
@@ -146,6 +175,7 @@ def main(
         viscosity=viscosity,
         diffusion_constant=diffusion_constant,
         dissipation_rate=dissipation_rate,
+        visualize_velocity=visualize_velocity,
         create_video=create_video,
     )
 
