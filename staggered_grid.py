@@ -21,32 +21,43 @@ def assemble_div_op(nx, ny, h, boundary_condition = BoundaryCondition.FIXED):
 
     num_u = (nx + 1) * ny
 
-    for i in range(nx):
-        for j in range(ny):
-            row_idx = mat_id_in_vec(i, j, ny)
+    if boundary_condition == BoundaryCondition.FIXED:
+        nx_new = nx
+        ny_new = ny
+    elif boundary_condition == BoundaryCondition.PERIODIC:
+        # When the boundary condition is periodic, we add an addition row and column that represents cell
+        # that wraps around the boundary
+        nx_new = nx + 1
+        ny_new = ny + 1
+    else:
+        raise ValueError(f"Unsupported boundary condition {boundary_condition}")
+
+    for i in range(nx_new):
+        for j in range(ny_new):
+            row_idx = mat_id_in_vec(i, j, ny_new)
             # for each cell(i, j), div = (u(i+1,j)-u(i,j)) / h + (v(i,j+1),v(i,j)) / h
             
             # u(i, j)
             rows.append(row_idx)
-            cols.append(mat_id_in_vec(i, j, ny))
+            cols.append(mat_id_in_vec(i, j % ny, ny))
             data.append(-1.0 / h)
 
             # u(i+1,j)
             rows.append(row_idx)
-            cols.append(mat_id_in_vec(i + 1, j, ny))
+            cols.append(mat_id_in_vec((i + 1) % (nx + 1), j % ny, ny))
             data.append(1.0 / h)
 
             # v(i, j)
             rows.append(row_idx)
-            cols.append(num_u + mat_id_in_vec(i, j, ny + 1))
+            cols.append(num_u + mat_id_in_vec(i % nx, j, ny + 1))
             data.append(-1.0 / h)
 
             # v(i, j+1)
             rows.append(row_idx)
-            cols.append(num_u + mat_id_in_vec(i, j + 1, ny + 1))
+            cols.append(num_u + mat_id_in_vec(i % nx, (j + 1) % (ny + 1), ny + 1))
             data.append(1.0 / h)
 
-    B = csc_matrix((data, (rows, cols)), shape=(nx * ny, (nx + 1) * ny + nx * (ny + 1)))
+    B = csc_matrix((data, (rows, cols)), shape=(nx_new * ny_new, (nx + 1) * ny + nx * (ny + 1)))
     return B  
 
 
@@ -62,11 +73,17 @@ class PressureSolver():
         self.num_u = nx * (ny - 1)
         self.num_v = (nx - 1) * ny
 
-        self.boundary_condition = boundary_condition
 
         self.u = np.zeros([nx, ny - 1])  # u (first) component of velocity
         self.v = np.zeros([nx - 1, ny])  # v (second) component of velocity
-        self.p = np.zeros([nx - 1, ny - 1])  # pressure at cell center
+        
+        if boundary_condition == BoundaryCondition.FIXED:
+            self.p = np.zeros([nx - 1, ny - 1])  # pressure at cell center
+        elif boundary_condition == BoundaryCondition.PERIODIC:
+            self.p = np.zeros([nx, ny])  # we will also have cells between u[0, :] and u[-1, :] and v[:, 0] and v[:, -1]
+        else:
+            raise ValueError(f"Unsupported boundary condition {boundary_condition}")
+        self.boundary_condition = boundary_condition
 
         self.div_op = assemble_div_op(nx - 1, ny - 1, h, boundary_condition)  # for computing divergence for each cell
         self.grad_op = -self.div_op.T  # for computing gradient at cell centers
@@ -82,10 +99,6 @@ class PressureSolver():
     def v_vec_idx(self, i, j):
         # Return the idx of v(i, j) in v.flatten()
         return mat_id_in_vec(i, j, self.ny)
-    
-    def p_vec_idx(self, i, j):
-        # Return the idx of p(i, j) in p.flatten()
-        return mat_id_in_vec(i, j, self.ny - 1)
 
     def assemble_img_velo_to_grid_transform(self):
         # Build a [num_u, nx * ny] matrix and a [num_v, nx * ny] matrix to map velocities in the (nx, ny) image
@@ -150,14 +163,14 @@ class PressureSolver():
 
 class DiffusionSolver():
     """Finite difference solver for diffusion"""
-    def __init__(self, nx, ny, h):
+    def __init__(self, nx, ny, h, boundary_condition):
         # For each scalar field of size (nx, ny), the values are at the cell center
         # We build and cache the gradient matrix for computing the gradient at cell center, to be used in diffusion
         self.nx = nx
         self.ny = ny
         self.h = h
 
-        div_op = assemble_div_op(nx, ny, h)
+        div_op = assemble_div_op(nx, ny, h, boundary_condition)
         grad_op = -div_op.T
         self.laplacian_op = div_op.dot(grad_op)
 

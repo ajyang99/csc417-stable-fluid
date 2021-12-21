@@ -29,8 +29,8 @@ class StableFluidImg():
         self.velocities = np.zeros([self.nx, self.ny, 2])  # 2D velocity field
         
         self.pressure_solver = PressureSolver(self.nx, self.ny, 1.0, boundary_condition)  # staggered MAC grid for pressure solve
-        self.velo_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for velocity field
-        self.scalar_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for scalar field
+        self.velo_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0, boundary_condition)  # diffusion for velocity field
+        self.scalar_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0, boundary_condition)  # diffusion for scalar field
 
         # positions of each pixel/cell on the image grid to be used to trace particle in advection
         # note that unlike the paper we don't add the 0.5 offset since scipy.ndimage assumes (0, 0) is cell center
