@@ -4,8 +4,8 @@ from scipy.sparse import csc_matrix, identity
 from scipy.sparse.linalg import factorized
 
 
-def mat_id_in_vec(i, j, num_rows):
-    return i * num_rows + j
+def mat_id_in_vec(i, j, ny):
+    return i * ny + j
 
 
 def assemble_div_op(nx, ny, h):
@@ -49,10 +49,10 @@ def assemble_div_op(nx, ny, h):
 
 
 class PressureSolver():
-    """Staggered MAC grid for diffusion, pressure solve, etc."""
+    """Staggered MAC grid for pressure solve"""
     def __init__(self, nx, ny, h):
-        # The image size is [nx, ny], so each "particle" is each pixel in the image
-        # as a result, the MAC cell corners are the center of each pixel, so
+        # The image size is [nx, ny]
+        # The MAC cell corners are the center of each pixel, so
         # the dimension of the staggered MAC grid is (nx - 1) * (ny - 1)
         self.nx = nx
         self.ny = ny
@@ -64,9 +64,9 @@ class PressureSolver():
         self.v = np.zeros([nx - 1, ny])  # v (second) component of velocity
         self.p = np.zeros([nx - 1, ny - 1])  # pressure at cell center
 
-        self.B = assemble_div_op(nx - 1, ny - 1, h)  # for computing divergence on edges
-        self.D = self.B.T  # for computing gradient at cell centers
-        laplacian_p_op = self.B.dot(self.D)  # for computing laplacian at cell centers
+        self.div_op = assemble_div_op(nx - 1, ny - 1, h)  # for computing divergence for each cell
+        self.grad_op = -self.div_op.T  # for computing gradient at cell centers
+        laplacian_p_op = self.div_op.dot(self.grad_op)  # for computing laplacian at cell centers
         self.laplacian_p_op_factorized = factorized(laplacian_p_op)  # pre-factor to speed up solve time
 
         self.Pu, self.Pv = self.assemble_img_velo_to_grid_transform()
@@ -127,10 +127,10 @@ class PressureSolver():
         return img_velo
     
     def pressure_solve(self, dt, density):
-        div_velocity = self.B.dot(np.concatenate([self.u.flatten(), self.v.flatten()]))
+        div_velocity = self.div_op.dot(np.concatenate([self.u.flatten(), self.v.flatten()]))
         self.p = self.laplacian_p_op_factorized(div_velocity)
 
-        delta_velo_flattened = dt / density * self.D.dot(self.p)
+        delta_velo_flattened = dt / density * self.grad_op.dot(self.p)
         self.u -= delta_velo_flattened[:self.num_u].reshape(self.nx, self.ny - 1)
         self.v -= delta_velo_flattened[self.num_u:].reshape(self.nx - 1, self.ny)
 
@@ -144,20 +144,21 @@ class DiffusionSolver():
         self.ny = ny
         self.h = h
 
-        self.D = assemble_div_op(nx, ny, h).T
+        div_op = assemble_div_op(nx, ny, h)
+        grad_op = -div_op.T
+        self.laplacian_op = div_op.dot(grad_op)
 
         # cached values for diffusion, will update/cache once diffusion constant/dt are available
         self.diffusion_constant = None
         self.dt = None
-        self.diffusion_op_u_factorized = None
+        self.diffusion_op_factorized = None
     
     def compute_diffusion_op(self, dt, diffusion_constant):
         if self.dt != dt or self.diffusion_constant != diffusion_constant:
             self.diffusion_constant = diffusion_constant
             self.dt = dt
-            laplacian_op = -self.D.T.dot(self.D)
             self.diffusion_op_factorized = factorized(
-                identity(self.nx * self.ny, format="csc") - dt * diffusion_constant * laplacian_op
+                identity(self.nx * self.ny, format="csc") - dt * diffusion_constant * self.laplacian_op
             )
     
     def diffuse(self, S, dt, diffusion_constant):

@@ -17,7 +17,7 @@ class StableFluidImg():
     The 2D velocity field thus has the same width and height as the image, and the scalar field consists of the
     RGB values of the image.
     """
-    def __init__(self, img, outdir):
+    def __init__(self, img, outdir, interp_order=1):
         self.nx = img.shape[0]
         self.ny = img.shape[1]
         
@@ -25,10 +25,10 @@ class StableFluidImg():
         # the velocity and scalar fields, we just use one variable for each field to store the most up-to-date
         # values, since we can just always update the variables directly and there is no point in saving the
         # old values.
-        self.img = img  # scalar field at cell center of shape (nx, ny, 3)
+        self.img = img  # scalar color field at cell center of shape (nx, ny, 3)
         self.velocities = np.zeros([self.nx, self.ny, 2])  # 2D velocity field
         
-        self.pressure_solver = PressureSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for velocity
+        self.pressure_solver = PressureSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for pressure solve
         self.velo_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for velocity field
         self.scalar_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for scalar field
 
@@ -36,6 +36,7 @@ class StableFluidImg():
         # note that unlike the paper we don't add the 0.5 offset since scipy.ndimage assumes (0, 0) is cell center
         self.pos_x, self.pos_y = np.indices([self.nx, self.ny])
 
+        self.interp_order = interp_order  # to be used in advection
         self.outdir = outdir
         os.makedirs(outdir, exist_ok=True)
     
@@ -57,7 +58,7 @@ class StableFluidImg():
         mid_point_velocities = np.zeros([self.nx, self.ny, 2])
         for i in range(2):
             mid_point_velocities[:, :, i] = ndimage.map_coordinates(
-                self.velocities[:, :, i], mid_point_pos, order=2, mode="wrap"
+                self.velocities[:, :, i], mid_point_pos, order=self.interp_order, mode="wrap"
             )
         pos = np.stack(
             [
@@ -68,9 +69,9 @@ class StableFluidImg():
         
         # find the new velocities and texture at each pixel/cell according to pos
         for i in range(3):
-            self.img[:, :, i] = ndimage.map_coordinates(self.img[:, :, i], pos, order=2, mode="wrap")
+            self.img[:, :, i] = ndimage.map_coordinates(self.img[:, :, i], pos, order=self.interp_order, mode="wrap")
         for i in range(2):
-            self.velocities[:, :, i] = ndimage.map_coordinates(self.velocities[:, :, i], pos, order=2, mode="wrap")
+            self.velocities[:, :, i] = ndimage.map_coordinates(self.velocities[:, :, i], pos, order=self.interp_order, mode="wrap")
     
     def visualize_velocities(self, out_fpath = None):
         fig, ax = plt.subplots(figsize=(8,8))

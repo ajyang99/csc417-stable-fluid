@@ -132,3 +132,14 @@ dmypy.json
 out/
 
 **/.DS_Store
+**.aux
+**.bbl
+**.blg
+**.brf
+**.fdb_latexmk
+**.fls
+**.log
+**.dvi
+**.synctex.gz
+**.out
+report/report.pdf
