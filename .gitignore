@@ -130,7 +130,9 @@ dmypy.json
 
 # others
 out/
+out_archive/
 
+# latex
 **/.DS_Store
 **.aux
 **.bbl

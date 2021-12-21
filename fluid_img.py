@@ -7,7 +7,7 @@ from fire import Fire
 from scipy import ndimage
 
 from staggered_grid import PressureSolver, DiffusionSolver
-from utils import create_video_from_img_fpths
+from utils import create_video_from_img_fpths, BoundaryCondition
 
 
 class StableFluidImg():
@@ -17,7 +17,7 @@ class StableFluidImg():
     The 2D velocity field thus has the same width and height as the image, and the scalar field consists of the
     RGB values of the image.
     """
-    def __init__(self, img, outdir, interp_order=1):
+    def __init__(self, img, outdir, boundary_condition, interp_order=2):
         self.nx = img.shape[0]
         self.ny = img.shape[1]
         
@@ -28,7 +28,7 @@ class StableFluidImg():
         self.img = img  # scalar color field at cell center of shape (nx, ny, 3)
         self.velocities = np.zeros([self.nx, self.ny, 2])  # 2D velocity field
         
-        self.pressure_solver = PressureSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for pressure solve
+        self.pressure_solver = PressureSolver(self.nx, self.ny, 1.0, boundary_condition)  # staggered MAC grid for pressure solve
         self.velo_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for velocity field
         self.scalar_diffusion_solver = DiffusionSolver(self.nx, self.ny, 1.0)  # staggered MAC grid for scalar field
 
@@ -36,7 +36,11 @@ class StableFluidImg():
         # note that unlike the paper we don't add the 0.5 offset since scipy.ndimage assumes (0, 0) is cell center
         self.pos_x, self.pos_y = np.indices([self.nx, self.ny])
 
+        self.boundary_condition = boundary_condition
         self.interp_order = interp_order  # to be used in advection
+        self.velo_interp_mode = "wrap" if self.boundary_condition == BoundaryCondition.PERIODIC else "constant"
+        self.scalar_interp_mode = "wrap" if self.boundary_condition == BoundaryCondition.PERIODIC else "nearest"
+
         self.outdir = outdir
         os.makedirs(outdir, exist_ok=True)
     
@@ -58,7 +62,7 @@ class StableFluidImg():
         mid_point_velocities = np.zeros([self.nx, self.ny, 2])
         for i in range(2):
             mid_point_velocities[:, :, i] = ndimage.map_coordinates(
-                self.velocities[:, :, i], mid_point_pos, order=self.interp_order, mode="wrap"
+                self.velocities[:, :, i], mid_point_pos, order=self.interp_order, mode=self.velo_interp_mode
             )
         pos = np.stack(
             [
@@ -69,9 +73,17 @@ class StableFluidImg():
         
         # find the new velocities and texture at each pixel/cell according to pos
         for i in range(3):
-            self.img[:, :, i] = ndimage.map_coordinates(self.img[:, :, i], pos, order=self.interp_order, mode="wrap")
+            self.img[:, :, i] = ndimage.map_coordinates(
+                self.img[:, :, i], pos,
+                order=self.interp_order,
+                mode=self.scalar_interp_mode
+            )
         for i in range(2):
-            self.velocities[:, :, i] = ndimage.map_coordinates(self.velocities[:, :, i], pos, order=self.interp_order, mode="wrap")
+            self.velocities[:, :, i] = ndimage.map_coordinates(
+                self.velocities[:, :, i], pos,
+                order=self.interp_order,
+                mode=self.velo_interp_mode
+            )
     
     def visualize_velocities(self, out_fpath = None):
         fig, ax = plt.subplots(figsize=(8,8))
@@ -105,11 +117,11 @@ class StableFluidImg():
         for time_step in range(num_iterations):
             # Step 1: add external forces
             # add external forces to velocities based on how white each pixel is
-            # external_forces = np.linalg.norm(self.img, axis=2) * 0.2
-            # self.add_external_forces(self.velocities, external_forces[:, :, None], dt)
-            external_forces = np.zeros([self.nx, self.ny, 2])
-            external_forces[int(0.35 * self.nx):int(0.65 * self.nx), int(0.5 * self.ny):, 0] = -0.1
-            self.add_external_forces(self.velocities, external_forces, dt)
+            external_forces = np.linalg.norm(self.img, axis=2) * 0.2
+            self.add_external_forces(self.velocities, external_forces[:, :, None], dt)
+            # external_forces = np.zeros([self.nx, self.ny, 2])
+            # external_forces[int(0.35 * self.nx):int(0.65 * self.nx), int(0.5 * self.ny):, 0] = -0.1
+            # self.add_external_forces(self.velocities, external_forces, dt)
 
             # we can optionally add additional "forces" to the scalar field, but here we don't add additional change
             # to the color
@@ -158,6 +170,7 @@ class StableFluidImg():
 def main(
     img_fpath="data/monroe.jpeg",
     outdir="out/monroe",
+    boundary_condition="periodic",
     num_iterations=300,
     dt=0.1,
     density=1.0,
@@ -166,9 +179,9 @@ def main(
     dissipation_rate=0.0,
     visualize_velocity=False,
     create_video=True,
-):
+):    
     img = cv2.imread(img_fpath)
-    fluid = StableFluidImg(img, outdir)
+    fluid = StableFluidImg(img, outdir, BoundaryCondition(boundary_condition))
     fluid.simulate(
         num_iterations=num_iterations,
         dt=dt,

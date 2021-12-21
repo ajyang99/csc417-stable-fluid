@@ -1,14 +1,16 @@
 import numpy as np
 from numpy.lib.function_base import diff
+from numpy.lib.twodim_base import diag
 from scipy.sparse import csc_matrix, identity
 from scipy.sparse.linalg import factorized
+from utils import BoundaryCondition
 
 
 def mat_id_in_vec(i, j, ny):
     return i * ny + j
 
 
-def assemble_div_op(nx, ny, h):
+def assemble_div_op(nx, ny, h, boundary_condition = BoundaryCondition.FIXED):
     # for a grid of size (nx, ny), we have edge values u of size (nx, ny - 1) and v of size (nx - 1, ny)
     # B.dot(np.concatenate([u.flatten(), v.flatten()])) gives div(velocity) at each cell
     # B should be of shape [nx * ny, (nx + 1) * ny + nx * (ny + 1)] where
@@ -50,7 +52,7 @@ def assemble_div_op(nx, ny, h):
 
 class PressureSolver():
     """Staggered MAC grid for pressure solve"""
-    def __init__(self, nx, ny, h):
+    def __init__(self, nx, ny, h, boundary_condition: BoundaryCondition):
         # The image size is [nx, ny]
         # The MAC cell corners are the center of each pixel, so
         # the dimension of the staggered MAC grid is (nx - 1) * (ny - 1)
@@ -60,11 +62,13 @@ class PressureSolver():
         self.num_u = nx * (ny - 1)
         self.num_v = (nx - 1) * ny
 
+        self.boundary_condition = boundary_condition
+
         self.u = np.zeros([nx, ny - 1])  # u (first) component of velocity
         self.v = np.zeros([nx - 1, ny])  # v (second) component of velocity
         self.p = np.zeros([nx - 1, ny - 1])  # pressure at cell center
 
-        self.div_op = assemble_div_op(nx - 1, ny - 1, h)  # for computing divergence for each cell
+        self.div_op = assemble_div_op(nx - 1, ny - 1, h, boundary_condition)  # for computing divergence for each cell
         self.grad_op = -self.div_op.T  # for computing gradient at cell centers
         laplacian_p_op = self.div_op.dot(self.grad_op)  # for computing laplacian at cell centers
         self.laplacian_p_op_factorized = factorized(laplacian_p_op)  # pre-factor to speed up solve time
@@ -127,6 +131,15 @@ class PressureSolver():
         return img_velo
     
     def pressure_solve(self, dt, density):
+        if self.boundary_condition == BoundaryCondition.FIXED:
+            # note that u[0, :] are at the vertical line that crosses the cell centers at img[0, :]
+            # so if we make the boundary velocity zero, then by interpolation u[0, :] should be half
+            # of what it should be, similarly for the other boundaries
+            self.u[0, :] /= 2
+            self.u[-1, :] /= 2
+            self.v[:, 0] /= 2
+            self.v[:, -1] /= 2
+
         div_velocity = self.div_op.dot(np.concatenate([self.u.flatten(), self.v.flatten()]))
         self.p = self.laplacian_p_op_factorized(div_velocity)
 

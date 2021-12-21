@@ -1,5 +1,7 @@
 import imageio
 
+from enum import Enum
+
 
 def create_video_from_img_fpths(img_fpaths, out_fpath):
     writer = imageio.get_writer(out_fpath, fps=20)
@@ -7,3 +9,8 @@ def create_video_from_img_fpths(img_fpaths, out_fpath):
         im = imageio.imread(img_fpath)
         writer.append_data(im)
     writer.close()
+
+
+class BoundaryCondition(str, Enum):
+    FIXED = "fixed"
+    PERIODIC = "periodic"
