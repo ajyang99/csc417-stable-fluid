@@ -17,7 +17,7 @@ The implementation is written in Python and tested with Python 3.7.4. The follow
 
 We implement for both 2D and 3D applications. We support various types of external forces. We use the Python `fire` package to support various command line arguments.
 
-TO recreate the 2D visualization with external force proportional to image pixel intensities, we use the command
+To recreate the 2D visualization with external force proportional to image pixel intensities, we use the command
 
     python fluid_img.py simulate --dt=0.01 --density=0.01
 
@@ -36,3 +36,12 @@ To recreate the 3D visualization with the points initialized to be red in the ce
 To recreate the 3D visualization with the pretty colors, run
 
     python fluid_voxel.py simulate --input="pretty" --outdir=out/3d_voxels/pretty
+
+
+### Image credits
+Included in data/* are images downloaded from the Internet. The original images and their artists are listed below.
+
+* The Marilyn Diptych (1962) by Andy Warhol
+* Under the Wave off Kanagawa by the Japanese ukiyo-e artist Hokusai
+* White Panda Bear Making a Heart Ink by Balazs Solti
+* Fish by Qi Baishi
