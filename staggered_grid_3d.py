@@ -2,6 +2,7 @@ import numpy as np
 from numpy.lib.function_base import diff
 from scipy.sparse import csc_matrix, identity
 from scipy.sparse.linalg import factorized
+from utils import BoundaryCondition
 
 
 def mat_id_in_vec(i, j, k, ny, nz):
@@ -63,7 +64,7 @@ def assemble_div_op(nx, ny, nz, h):
 
 class PressureSolver():
     """Staggered MAC grid for pressure solve"""
-    def __init__(self, nx, ny, nz, h):
+    def __init__(self, nx, ny, nz, h, boundary_condition = BoundaryCondition.FIXED):
         # The input 3D voxel grid is [nx, ny, nz], so the MAC grid dimension is [nx - 1, ny - 1, nz - 1]
         self.nx = nx
         self.ny = ny
@@ -84,6 +85,8 @@ class PressureSolver():
         self.laplacian_p_op_factorized = factorized(laplacian_p_op)  # pre-factor to speed up solve time
 
         self.Pu, self.Pv, self.Pw = self.assemble_voxel_velo_to_grid_transform()
+
+        self.boundary_condition = boundary_condition
     
     def u_vec_idx(self, i, j, k):
         # Return the idx of u(i, j) in u.flatten()
@@ -164,6 +167,17 @@ class PressureSolver():
         return voxel_velo
     
     def pressure_solve(self, dt, density):
+        if self.boundary_condition == BoundaryCondition.FIXED:
+            # note that u[0, ...] are at the vertical line that crosses the cell centers at img[0, :]
+            # so if we make the boundary velocity zero, then by interpolation u[0, :] should be half
+            # of what it should be, similarly for the other boundaries
+            self.u[0, :, :] /= 2
+            self.u[-1, :, :] /= 2
+            self.v[:, 0, :] /= 2
+            self.v[:, -1, :] /= 2
+            self.w[:, :, 0] /= 2
+            self.w[:, :, -1] /= 2
+
         div_velocity = self.div_op.dot(np.concatenate([self.u.flatten(), self.v.flatten(), self.w.flatten()]))
         self.p = self.laplacian_p_op_factorized(div_velocity)
 

@@ -1,14 +1,30 @@
 import numpy as np
-import cv2
 import os
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
+from enum import Enum
 from fire import Fire
 from scipy import ndimage
 
 from staggered_grid_3d import PressureSolver, DiffusionSolver
 from utils import create_video_from_img_fpths
+
+class ExternalForceType(str, Enum):
+    INTENSITY = "intensity"
+    CENTER_PUSH_UP = "bot_push_up"
+
+def construct_external_forces_by_type(voxel_grid, external_force_type):
+    if external_force_type == ExternalForceType.INTENSITY:
+        external_forces = np.linalg.norm(voxel_grid, axis=2) * 0.2
+        external_forces = external_forces[:, :, None]
+    elif external_force_type == ExternalForceType.CENTER_PUSH_UP:
+        nx, ny, nz = voxel_grid.shape[:3]
+        external_forces = np.zeros([nx, ny, nz, 3])
+        external_forces[int(0.25 * nx):int(0.75 * nx), int(0.25 * ny):int(0.75 * ny), int(0.25 * nz):int(0.75 * nz), :] = np.array([1.0, 1.0, 1.0])
+    else:
+        raise ValueError(f"Unsupported external force type {external_force_type}")
+    return external_forces
 
 
 def create_pretty_voxel_grid():
@@ -23,7 +39,7 @@ def create_pretty_voxel_grid():
     return colors
 
 
-def create_single_drop_voxel_grid():
+def create_center_block_voxel_grid():
     # prepare some coordinates
     nx, ny, nz = 8, 8, 8
 
@@ -37,22 +53,6 @@ def create_single_drop_voxel_grid():
 
 
 def plot_voxel(voxel_colors, out_fpath = None):
-    # n = 15
-    # x, y, z = np.indices(voxel_colors.shape[:3])
-    # offset_x, offset_y, offset_z = np.indices([n, n, n]) * 1.0 / n
-    # points = np.stack([x, y, z], axis=3).reshape(-1, 3)
-    # offsets = np.stack([offset_x, offset_y, offset_z], axis=3).reshape(-1, 3)
-    # points_all = np.concatenate([points + offset[None, :] for offset in offsets], axis=0)
-    # colors_all = np.concatenate([voxel_colors.reshape(-1, 3)] * len(offsets), axis=0)
-    # o3d_pcd = o3d.geometry.PointCloud(points=o3d.utility.Vector3dVector(points_all))
-    # o3d_pcd.colors = o3d.utility.Vector3dVector(colors_all)
-    # o3d.visualization.draw_geometries([o3d_pcd])
-    # from IPython import embed
-    # embed()
-    # assert False
-    # ax = plt.figure().add_subplot(projection="3d")
-    # ax.voxels(np.full(voxel_colors.shape[:3], True), facecolors=(voxel_colors * 255).astype(np.int))
-
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
 
@@ -77,7 +77,7 @@ class StableFluidVoxel():
     The 2D velocity field thus has the same width and height as the image, and the scalar field consists of the
     RGB values of the image.
     """
-    def __init__(self, voxel_grid, outdir):
+    def __init__(self, voxel_grid, outdir, external_force_type):
         self.nx = voxel_grid.shape[0]
         self.ny = voxel_grid.shape[1]
         self.nz = voxel_grid.shape[2]
@@ -96,6 +96,8 @@ class StableFluidVoxel():
         # positions of each pixel/cell on the image grid to be used to trace particle in advection
         # note that unlike the paper we don't add the 0.5 offset since scipy.ndimage assumes (0, 0) is cell center
         self.pos_x, self.pos_y, self.pos_z = np.indices([self.nx, self.ny, self.nz])
+
+        self.external_force_type = external_force_type
 
         self.outdir = outdir
         os.makedirs(outdir, exist_ok=True)
@@ -144,13 +146,7 @@ class StableFluidVoxel():
         for time_step in range(num_iterations):
             # Step 1: add external forces
             # add external forces to velocities based on how white each pixel is
-            # external_forces = np.linalg.norm(self.voxel_grid, axis=2) * 0.2
-            # self.add_external_forces(self.velocities, external_forces[..., None], dt)
-            external_forces = np.zeros(self.velocities.shape)
-            external_forces[2:6, 2:6, 2:6, :] = np.array([1.0, 1.0, 1.0])
-            # external_forces[..., 1] = -0.1
-            # external_forces[:, :, :] = np.linalg.norm(self.voxel_grid, axis=3)[:, :, :, None] * 0.2
-            # external_forces[int(0.35 * self.nx):int(0.65 * self.nx), int(0.5 * self.ny):, 1] = -0.1
+            external_forces = construct_external_forces_by_type(self.voxel_grid, self.external_force_type)
             self.add_external_forces(self.velocities, external_forces, dt)
 
             # we can optionally add additional "forces" to the scalar field, but here we don't add additional change
@@ -183,19 +179,17 @@ class StableFluidVoxel():
             os.makedirs(os.path.dirname(out_fpath), exist_ok=True)
             plot_voxel(self.voxel_grid, out_fpath)
             out_color_fpaths.append(out_fpath)
-        
-            # if visualize_velocity:
-            #     out_fpath_velo = os.path.join(self.outdir, "velocities", f"{time_step:06d}.png")
-            #     self.visualize_velocities(out_fpath_velo)
-            #     out_velocity_fpaths.append(out_fpath_velo)
 
         if create_video:
             create_video_from_img_fpths(out_color_fpaths, os.path.join(self.outdir, "colors", "out.mp4"))
-            create_video_from_img_fpths(out_color_fpaths[::-1], os.path.join(self.outdir, "colors", "reverse.mp4"))            
+            create_video_from_img_fpths(out_color_fpaths[::-1], os.path.join(self.outdir, "colors", "reverse.mp4"))
+            create_video_from_img_fpths(out_color_fpaths, os.path.join(self.outdir, "colors", "out.gif"))
+            create_video_from_img_fpths(out_color_fpaths[::-1], os.path.join(self.outdir, "colors", "reverse.gif"))            
 
 
 def main(
-    outdir="out/3d_voxels",
+    input="pretty",
+    outdir="out/3d_voxels/pretty",
     num_iterations=300,
     dt=0.1,
     density=1.0,
@@ -204,10 +198,16 @@ def main(
     dissipation_rate=0.0,
     create_video=True,
 ):
-    # voxel_grid = create_pretty_voxel_grid()
-    voxel_grid = create_single_drop_voxel_grid()
-    plot_voxel(voxel_grid)
-    fluid = StableFluidVoxel(voxel_grid, outdir)
+    if input == "pretty":
+        voxel_grid = create_pretty_voxel_grid()
+        external_force_type = ExternalForceType.INTENSITY
+    elif input == "center":
+        voxel_grid = create_center_block_voxel_grid()
+        external_force_type = ExternalForceType.CENTER_PUSH_UP
+    else:
+        raise ValueError(f"Unknown input {input}")
+    # plot_voxel(voxel_grid)
+    fluid = StableFluidVoxel(voxel_grid, outdir, external_force_type)
     fluid.simulate(
         num_iterations=num_iterations,
         dt=dt,

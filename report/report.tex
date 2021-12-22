@@ -181,12 +181,12 @@ some qualitative results.
 To better understand the Stable Fluids paper~\cite{Stam1999Fluid} that we are implementing, we have consulted multiple resources, including Bridson's 2008 Fluid Simulation textbook~\cite{Bridon2008FluidBook}, Professor David Levin's fluid simulation lecture video~\cite{csc417fluidvideo}, Dan Piponi's fluid simulation talk~\cite{piponitalk}, and Philip Zucker's blog post~\cite{zuckerblog}.
 
 \section{Algorithm}
-In this section, we describe the core stable fluid simulation algorithm introduced in~\cite{Stam1999Fluid}. Note that we mostly follow the notations used in the paper for consistency and clarity, with the exception that the paper used $a$ for scalar values and $S$ as external source while we use $S$ and $P$ respectively, and that the paper uses time step as a continuous value (the new time step is $t + \Delta t$), while we use time step as a discrete value (the new time step is $t + 1$ at time $\Delta t$ later).
+In this section, we describe the core stable fluid simulation algorithm introduced in~\cite{Stam1999Fluid}. Note that we mostly follow the notations used in the paper for consistency and clarity, with the exception that the paper uses $a$ for scalar values and $S$ as external source while we use $S$ and $P$ respectively, and that the paper uses time step as a continuous value (the new time step is $t + \Delta t$), while we use time step as a discrete value (the new time step is $t + 1$ at time $\Delta t$ later).
 \label{sec:algo}
 \subsection{Problem Setting}
 Given a two-dimensional fluid field with spatial coordinates $\mathbf{x} = (x, y)$ or a three-dimensional field with coordinates $\mathbf{x} = (x, y, z)$, we can define the velocity field $\mathbf{u}$, the pressure field $p$, and the scalar field $S$, where $\mathbf{u}(\mathbf{x}, t)$ corresponds to the two-dimensional or three-dimensional velocity, $p(\mathbf{x}, t)$ represents the pressure, and scalar quantities $S(\mathbf{x}, t)$ represent additional information such as colors or temperature at position $\mathbf{x}$ and time step $t$.
 
-From time step $t$ to time step $t + 1$ with change of time $\Delta t$, following the Navier-Stokes equation, the velocities and pressure in the fluid field will change according to the external force $\mathbf{f}(\mathbf{x}, t)$ applied, the density $\rho$ and the viscosity constant $\nu$ of the liquid. In addition, the substances $S$ will change according to the changing velocities, the diffusion constant $\kappa$ of the scalar values and the dissipation rate $\alpha$. We next describe the Navier-Stokes equation and the specifics of how to update these quantities in a fluid field.
+From time step $t$ to time step $t + 1$ with change of time $\Delta t$, following the Navier-Stokes equation, the velocities and pressure in the fluid field will change according to the external force $\mathbf{f}(\mathbf{x}, t)$ applied, the density $\rho$ and the kinematic viscosity $\nu$ of the liquid. In addition, the substances $S$ will change according to the updated velocities, the diffusion constant $\kappa$ of the scalar values and the dissipation rate $\alpha$. We next describe the Navier-Stokes equation and the specifics of how to update these quantities in a fluid field.
 
 % Given an input grid of dimension either 2 or 3, the stable fluids algorithm solves
 % for velocities and scalar values (such as textures or temperature) located at the
@@ -197,7 +197,7 @@ From time step $t$ to time step $t + 1$ with change of time $\Delta t$, followin
 % (3) diffusion, and (4) dissipation.
 % In order to allow for large time steps, in the advection step, the author
 % introduces a semi-Lagragian approach~\cite{Bridon2008FluidBook} to update quantities
-\subsection{Navier-Stokes Equation}
+\subsection{The Navier-Stokes Equation}
 The Navier-Stokes equation states that the change in velocities $\mathbf{u}$ and the pressure $p$ should satisfy the following constraints:
 \begin{equation}
 \label{eq:stokes}
@@ -227,9 +227,9 @@ In the Lagrangian view, if a particle moves from location $\mathbf{p}(\mathbf{x}
   p(x, -dt) = x - dt * w1(x_midpoint)
 \end{verbatim}
 
-\paragraph{Diffusion} The diffusion step corresponds to the $\frac{\partial \mathbf{u}}{\partial t} = \nu\nabla^2\mathbf{u}$ update. We use an implicit method to allow for stability when the viscosity is large:
+\paragraph{Diffusion} The diffusion step corresponds to the $\frac{\partial \mathbf{u}}{\partial t} = \nu\nabla^2\mathbf{u}$ part of Eq.~\ref{eq:stokes}. We use an implicit method to allow for stability when the viscosity is large:
 \begin{equation}
-  (\mathbf{I} - \mu\Delta t\nabla^2)\mathbf{w}_3(\mathbf{x}) = \mathbf{w}_2(\mathbf{x}),
+  (\mathbf{I} - \nu\Delta t\nabla^2)\mathbf{w}_3(\mathbf{x}) = \mathbf{w}_2(\mathbf{x}),
 \end{equation}
 where $\mathbf{I}$ is the identity matrix.
 
@@ -257,7 +257,7 @@ Updating the scalar quantities $S(\mathbf{x})$ is similar to the velocity update
 \end{equation}
 
 \subsection{Boundary Conditions}
-We consider two types of boundary conditions. In the fixed boundary condition, we force the velocities at the boundary to be a fixed value (\emph{e.g., 0}). In the periodic boundary condition, the fluid has no boundaries and wraps around. The paper proposes a Fourier-based approach to handle the periodic boundary condition, while in our implementation we can simply approximate the wrapping effect during the interpolation stage of advection. See Sec.~\ref{sec:impl} for more details.
+We consider two types of boundary conditions. In the fixed boundary condition, we force the velocities at the boundary to be a fixed value (\emph{e.g., 0}). In the periodic boundary condition, the fluid has no boundaries and wraps around. The paper proposes a Fourier-based approach to handle the periodic boundary condition, while in our implementation we can simply encode the wrapping effect when constructing the divergence operator. See Sec.~\ref{sec:impl} for more details.
 
 \section{Implementation}
 \label{sec:impl}
@@ -272,18 +272,83 @@ We consider two types of boundary conditions. In the fixed boundary condition, w
 
 % Additionally, the grid has an underlying pressure field $p$. Then, at each time step $t + 1$, the quantities on the velocity field $\mathbf{u}$, the scalar field $S$ and the pressure field $p$ will change due to the movement of the fluid. Specifically, the values will get updated according to the change of time $\Delta t$ from the previous time step, the external force defined by a force field $\mathbf{f}$
 
-Following the paper, we descretize the spatial coordinates of the fluid field $\mathbf{x}$ as a two-dimensional $N_1\times N_2$ grid or a three-dimensional $N_1\times N_2 \times N_3$ grid. The velocities $\mathbf{u} \in \mathbb{R}^{N_1\times N_2 \times 2}$ (or $\mathbb{R}^{N_1\times N_2 \times N_3 \times 3}$ in 3D) lie on the center of each cell. Similarly, the scalar fields $S \in \mathbb{R}^{N_1\times N_2 \times C}$ (or $\mathbb{R}^{N_1\times N_2 \times N_3 \times C}$ in 3D) where $C$ is the number of channels (\emph{e.g.}, $C = 3$ for an RGB color field) are also defined at cell centers.
+Following the paper, we descretize the spatial coordinates of the fluid field $\mathbf{x}$ as a two-dimensional $N_1\times N_2$ grid or a three-dimensional $N_1\times N_2 \times N_3$ grid. The velocities $\mathbf{u} \in \mathbb{R}^{N_1\times N_2 \times 2}$ (or $\mathbb{R}^{N_1\times N_2 \times N_3 \times 3}$ in 3D) lie on the center of each cell. Similarly, the scalar fields $S \in \mathbb{R}^{N_1\times N_2 \times C}$ (or $\mathbb{R}^{N_1\times N_2 \times N_3 \times C}$ in 3D) where $C$ is the number of channels (\emph{e.g.}, $C = 3$ for an RGB color field) are also defined at cell centers. For simplicity, we assume two-dimensional grid in the rest of this section.
 
-The advection step computes a previous location $\mathbf{p}(\mathbf{x}, -\Delta t)$, which is in the continuous coordinate field. To extract the velocities and scalar quantities at this location, we apply linear interpolation over the velocity and scalar fields.
+The advection step computes a previous location $\mathbf{p}(\mathbf{x}, -\Delta t)$, which is in the continuous coordinate domain. To extract the velocities and scalar quantities at this location, we apply a second-order interpolation over the velocity and scalar fields.
 
-To compute the laplacian
+To construct the laplacian operator $\nabla^2$ during the diffusion stage, we use a finite difference approach to precompute a $(N_1\times N_2)\times(N_1\times N_2)$ laplacian matrix at cell centers. For the pressure projection stage, we employ a staggered Marker-and-Cell (MAC) grid~\cite{harlow1965MAC}. Specifically, we construct a staggered MAC grid of size $(N_1 - 1)\times(N_2 - 1)$ where each staggered cell center corresponds to a corner in the collocated cell. We transfer the velocities from the collocated grid to the edges/faces of a staggered MAC grid, solve for pressure at cell center with sparse solvers, and then transfer the updated velocities back to the original cell-centered collocated grid.
 
 \subsection{Implementation Details}
+We implement the stable fluids solver in Python for both 2D and 3D applications. We use the sparse solvers provided by \texttt{scipy}~\cite{scipy} to solve the sparse linear equations in diffusion and pressure solve. We additionally employ the \texttt{scipy.ndimage} function for interpolation during advection. For the periodic boundary condition, we use the \texttt{wrap} mode for both velocity and scalar interpolation. For the fixed boundary condition, we set the velocity at boundary to 0, and use the \texttt{constant} mode for velocity interpolation and the \texttt{nearest} mode for the scalar field interpolation.
 
 \subsection{Modifications}
+Our implementation differs from the original algorithm outlined in~\cite{Stam1999Fluid} in three major ways.
+
+First, for pressure solve, the paper uses the FISHPAK library to solve on the collocated grid. Since the FISHPAK library is not available in Python, and the staggered Marker-and-Cell (MAC) grid~\cite{harlow1965MAC} (which places velocities on the edges/faces and pressure at the center) is a popular choice for pressure solve in fluid simulation nowadays~\cite{Foster95realisticanimation, fluidcoupling07, variationalstokes2017, csc417fluidvideo}, we replace the original implementation with a staggered MAC grid combined with sparse solvers from the Python \texttt{scipy} library~\cite{scipy}.
+
+Second, at each time step iteration, the original paper updates velocities and scalar quantities in two separate passes (\emph{i.e.}, \texttt{VStep} and \texttt{SStep}). It first computes the new velocities \texttt{U1} at time step $t + 1$, and then uses the new velocities \texttt{U1} to update the scalar field during advection. As a result, in the same iteration, the velocity field and the scalar field are advected with two different velocities (\texttt{U0} vs. \texttt{U1}). In our implementation, we merge the \texttt{VStep} and \texttt{SStep} such that the velocities and the scalar field are both updated with the previous velocity $\texttt{U0}$ at time step $t$.
+
+Third, for the periodic boundary condition, instead of using the Fourier transform, we encode the wrapping condition when computing the divergence operators. Specifically, we increase the MAC grid size by one in each dimension, where these new added cells are made up of faces/edges coming from the existing velocity boundaries. As a result, the total number of velocity variables stay the same but we can solve for the additional pressure between the wrapped-around boundaries. 
 
 \section{Results}
 \label{sec:result}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.32\linewidth]{figs/monroe.jpeg}
+    \includegraphics[width=0.32\linewidth]{figs/monroe_fixed.png}
+    \includegraphics[width=0.32\linewidth]{figs/monroe_periodic.png}
+    \caption{Qualitative results for various boundary conditions. (Left) Original image. (Middle) Qualitative result after 300 time steps with fixed boundary condition. (Right) Qualitative result after 300 time steps with periodic boundary condition.
+    \label{fig:boundary-condition}}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.32\linewidth]{figs/monroe.jpeg}
+    \includegraphics[width=0.32\linewidth]{figs/monroe_vis0.png}
+    \includegraphics[width=0.32\linewidth]{figs/monroe_vis10.png}
+    \caption{Qualitative results for various viscosity results. (Left) Original image. (Middle) Qualitative result after 300 time steps with viscosity $\nu = 0$. (Right) Qualitative result after 300 time steps with viscosity $\nu = 10.0$.
+    \label{fig:monroe-vis}}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.32\linewidth]{figs/panda_small.jpeg}
+    \includegraphics[width=0.32\linewidth]{figs/panda_vis0.png}
+    \includegraphics[width=0.32\linewidth]{figs/panda_vis10.png}
+    \caption{Qualitative results for various viscosity results. (Left) Original image. (Middle) Qualitative result after 300 time steps with viscosity $\nu = 0$. (Right) Qualitative result after 300 time steps with viscosity $\nu = 10.0$.
+    \label{fig:panda-vis}}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.32\linewidth]{figs/panda_vis_init_vel.png}
+    \includegraphics[width=0.32\linewidth]{figs/panda_vis0_vel.png}
+    \includegraphics[width=0.32\linewidth]{figs/panda_vis10_vel.png}
+    \caption{Velocity plots results for various viscosity results with the fixed boundary condition and constant force applied to the center bottom block at every time step. (Left) Initial velocity. (Middle) Velocity plot after 300 time steps with viscosity $\nu = 0$. (Right) Velocity after 300 time steps with viscosity $\nu = 10.0$.
+    \label{fig:panda-vis-vel}}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.49\linewidth]{figs/3d_center_init.png}
+    \includegraphics[width=0.49\linewidth]{figs/3d_pretty_init.png}
+    \includegraphics[width=0.49\linewidth]{figs/3d_center_end.png}
+    \includegraphics[width=0.49\linewidth]{figs/3d_pretty_end.png}
+    \caption{Example visualizations of the 3D application. (Top row) Initialization of two examples. (Bottom row) Qualitative results after 300 iterations.
+    \label{fig:3d-vis}}
+\end{figure}
+
+We run our solver for both 2D and 3D applications. In this section we show some qualitative results. For more results, please refer to the video\footnote{\url{https://youtu.be/DIZUKA8GSEc}}.
+
+For the 2D application, we run the solver on an input image and create different visual ``melting" effects with various settings (\emph{e.g.}, various external force updates, boundary conditions, viscosity values, etc.).
+\paragraph{Boundary Conditions} Fig.~\ref{fig:boundary-condition} showcases results after 300 time steps with the fixed and periodic boundary conditions, where with fixed boundary the colors disappear into the boundary and with periodic boundary condition the texture wraps around.
+
+\paragraph{Kinematic Viscosity} Fig.~\ref{fig:monroe-vis} showcases qualitative results with different kinematic viscosity constants. Note that lower viscosity leads to freer movement. Fig.~\ref{fig:panda-vis} is another qualitative comparison, while Fig.~\ref{fig:panda-vis-vel} illustrates the velocity field.
+
+For more qualitative results with respect to the scalar field diffusion constant and dissipation rate, please refer to the supplementary video. 
+
+For the 3D application, we construct a toy $8\times 8\times 8$ voxel grid, and visualize the updates by plotting the voxel colors with a scatter plot. Please refer to Fig.~\ref{fig:3d-vis} for some qualitative examples. Note that due to time constraint, we did not properly implement both the fixed and periodic boundary conditions in the 3D case. However, we believe that our 2D implementation could be easily refactored and extended into the 3D implementation.
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{sample-base}

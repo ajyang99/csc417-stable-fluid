@@ -61,6 +61,25 @@ def assemble_div_op(nx, ny, h, boundary_condition = BoundaryCondition.FIXED):
     return B  
 
 
+def assemble_laplacian_op_for_wrapped_elements(nx, ny, h):
+    rows = []
+    cols = []
+    data = []
+    for i, dir in zip([0, -1], [-1, 1]):
+        for j in range(ny):
+            # for cell (i, j), we need to add contribution from cell[i + dir, j]
+            rows.append(mat_id_in_vec(i % nx, j, ny))
+            cols.append(mat_id_in_vec((i + dir) % nx, j, ny))
+            data.append(1.0 / h ** 2)
+    for i in range(nx):
+        for j, dir in zip([0, -1], [-1, 1]):
+            # for cell (i, j), we need to add contribution from cell[i, j + dir]
+            rows.append(mat_id_in_vec(i, j % ny, ny))
+            cols.append(mat_id_in_vec(i, (j + dir) % ny, ny))
+            data.append(1.0 / h ** 2)
+    delta = csc_matrix((data, (rows, cols)), shape=(nx * ny, nx * ny))
+    return delta
+
 class PressureSolver():
     """Staggered MAC grid for pressure solve"""
     def __init__(self, nx, ny, h, boundary_condition: BoundaryCondition):
@@ -170,9 +189,11 @@ class DiffusionSolver():
         self.ny = ny
         self.h = h
 
-        div_op = assemble_div_op(nx, ny, h, boundary_condition)
+        div_op = assemble_div_op(nx, ny, h, BoundaryCondition.FIXED)
         grad_op = -div_op.T
         self.laplacian_op = div_op.dot(grad_op)
+        if boundary_condition == BoundaryCondition.PERIODIC:
+            self.laplacian_op += assemble_laplacian_op_for_wrapped_elements(nx, ny, h)
 
         # cached values for diffusion, will update/cache once diffusion constant/dt are available
         self.diffusion_constant = None

@@ -3,11 +3,34 @@ import cv2
 import os
 import matplotlib.pyplot as plt
 
+from enum import Enum
 from fire import Fire
 from scipy import ndimage
 
 from staggered_grid import PressureSolver, DiffusionSolver
 from utils import create_video_from_img_fpths, BoundaryCondition
+
+
+class ExternalForceType(str, Enum):
+    PIXEL_INTENSITY = "intensity"
+    BOT_PUSH_UP = "bot_push_up"
+    GRAVITY_INTENSITY = "gravity"
+
+
+def construct_external_forces_by_type(img, external_force_type):
+    nx, ny = img.shape[:2]
+    if external_force_type == ExternalForceType.PIXEL_INTENSITY:
+        external_forces = np.linalg.norm(img, axis=2) * 0.2
+        external_forces = external_forces[:, :, None]
+    elif external_force_type == ExternalForceType.BOT_PUSH_UP:
+        external_forces = np.zeros([nx, ny, 2])
+        external_forces[int(0.35 * nx):int(0.65 * nx), int(0.5 * ny):, 0] = -0.1
+    elif external_force_type == ExternalForceType.GRAVITY_INTENSITY:
+        external_forces = np.zeros([nx, ny, 2])
+        external_forces[:, :, 0] = np.linalg.norm(img, axis=2) * 0.2
+    else:
+        raise ValueError(f"Unsupported external force type {external_force_type}")
+    return external_forces
 
 
 class StableFluidImg():
@@ -17,7 +40,12 @@ class StableFluidImg():
     The 2D velocity field thus has the same width and height as the image, and the scalar field consists of the
     RGB values of the image.
     """
-    def __init__(self, img, outdir, boundary_condition, interp_order=2):
+    def __init__(
+        self, img, outdir,
+        boundary_condition,
+        interp_order=2,
+        external_force_type=ExternalForceType.PIXEL_INTENSITY
+    ):
         self.nx = img.shape[0]
         self.ny = img.shape[1]
         
@@ -41,9 +69,11 @@ class StableFluidImg():
         self.velo_interp_mode = "wrap" if self.boundary_condition == BoundaryCondition.PERIODIC else "constant"
         self.scalar_interp_mode = "wrap" if self.boundary_condition == BoundaryCondition.PERIODIC else "nearest"
 
+        self.external_force_type = external_force_type
+
         self.outdir = outdir
         os.makedirs(outdir, exist_ok=True)
-    
+
     def add_external_forces(self, x, f, dt) -> None:
         x += dt * f
 
@@ -93,13 +123,8 @@ class StableFluidImg():
             self.velocities[:, :, 0],
             self.velocities[:, :, 1]
         )
-        # velocity_magnitude = np.linalg.norm(self.velocities, axis=2)
-        # ax.imshow(velocity_magnitude / np.max(velocity_magnitude))
         ax.set_aspect("equal")
         ax.invert_yaxis()
-        # from IPython import embed
-        # embed()
-        # assert False
         if out_fpath is None:
             fig.show()
         else:
@@ -117,11 +142,8 @@ class StableFluidImg():
         for time_step in range(num_iterations):
             # Step 1: add external forces
             # add external forces to velocities based on how white each pixel is
-            external_forces = np.linalg.norm(self.img, axis=2) * 0.2
-            self.add_external_forces(self.velocities, external_forces[:, :, None], dt)
-            # external_forces = np.zeros([self.nx, self.ny, 2])
-            # external_forces[int(0.35 * self.nx):int(0.65 * self.nx), int(0.5 * self.ny):, 0] = -0.1
-            # self.add_external_forces(self.velocities, external_forces, dt)
+            external_forces = construct_external_forces_by_type(self.img, self.external_force_type)
+            self.add_external_forces(self.velocities, external_forces, dt)
 
             # we can optionally add additional "forces" to the scalar field, but here we don't add additional change
             # to the color
@@ -162,8 +184,11 @@ class StableFluidImg():
         if create_video:
             create_video_from_img_fpths(out_color_fpaths, os.path.join(self.outdir, "colors", "out.mp4"))
             create_video_from_img_fpths(out_color_fpaths[::-1], os.path.join(self.outdir, "colors", "reverse.mp4"))
+            create_video_from_img_fpths(out_color_fpaths, os.path.join(self.outdir, "colors", "out.gif"))
+            create_video_from_img_fpths(out_color_fpaths[::-1], os.path.join(self.outdir, "colors", "reverse.gif"))
             if visualize_velocity:
                 create_video_from_img_fpths(out_velocity_fpaths, os.path.join(self.outdir, "velocities", "out.mp4"))
+                create_video_from_img_fpths(out_velocity_fpaths, os.path.join(self.outdir, "velocities", "out.gif"))
             
 
 
@@ -171,6 +196,7 @@ def main(
     img_fpath="data/monroe.jpeg",
     outdir="out/monroe",
     boundary_condition="periodic",
+    external_force_type="intensity",
     num_iterations=300,
     dt=0.1,
     density=1.0,
@@ -181,7 +207,10 @@ def main(
     create_video=True,
 ):    
     img = cv2.imread(img_fpath)
-    fluid = StableFluidImg(img, outdir, BoundaryCondition(boundary_condition))
+    fluid = StableFluidImg(
+        img, outdir, BoundaryCondition(boundary_condition),
+        external_force_type=ExternalForceType(external_force_type)
+    )
     fluid.simulate(
         num_iterations=num_iterations,
         dt=dt,
