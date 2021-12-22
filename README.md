@@ -2,7 +2,7 @@
 
 This is a Python implementation of Jos Stam's 1999 paper [Stable Fluids](https://graphics.stanford.edu/courses/cs448-01-spring/papers/stam.pdf).
 
-A 5-min video of the results is (here)[https://youtu.be/DIZUKA8GSEc].
+A 5-min video of the results is [here](https://youtu.be/DIZUKA8GSEc).
 
 ### Dependencies
 
